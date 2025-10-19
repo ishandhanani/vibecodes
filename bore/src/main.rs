@@ -148,49 +148,91 @@ fn run_app<B: ratatui::backend::Backend>(
         terminal.draw(|f| {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .margin(2)
+                .margin(1)
                 .constraints([
                     Constraint::Length(3),
-                    Constraint::Min(5),
+                    Constraint::Length(3),
+                    Constraint::Min(4),
                     Constraint::Length(3),
                 ])
                 .split(f.area());
 
-            let title = Paragraph::new("SSH Port Forward")
-                .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
-                .block(Block::default().borders(Borders::ALL));
+            // Title with futuristic styling
+            let title = Paragraph::new("⚡ SSH PORT FORWARD")
+                .style(Style::default()
+                    .fg(Color::Rgb(0, 255, 255))
+                    .add_modifier(Modifier::BOLD))
+                .block(Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Rgb(0, 200, 255))));
             f.render_widget(title, chunks[0]);
 
-            let items: Vec<ListItem> = vec![
-                ListItem::new(Line::from(vec![
-                    Span::styled("Host: ", Style::default().fg(Color::Yellow)),
-                    Span::raw(&app.host),
-                ])),
-                ListItem::new(Line::from(vec![
-                    Span::styled("Ports: ", Style::default().fg(Color::Yellow)),
-                    Span::raw(
-                        app.ports
-                            .iter()
-                            .map(|p| p.to_string())
-                            .collect::<Vec<_>>()
-                            .join(", "),
-                    ),
-                ])),
-            ];
+            // Host info
+            let is_active = app.ssh_process.is_some();
+            let host_status = if is_active { "●" } else { "○" };
+            let host_color = if is_active { Color::Rgb(0, 255, 150) } else { Color::Gray };
 
-            let list = List::new(items).block(Block::default().borders(Borders::ALL).title("Config"));
-            f.render_widget(list, chunks[1]);
+            let host_info = Paragraph::new(Line::from(vec![
+                Span::styled(host_status, Style::default().fg(host_color).add_modifier(Modifier::BOLD)),
+                Span::raw(" "),
+                Span::styled(&app.host, Style::default().fg(Color::Rgb(150, 150, 255))),
+            ]))
+            .block(Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Rgb(80, 80, 120)))
+                .title("TARGET"));
+            f.render_widget(host_info, chunks[1]);
 
-            let status_color = if app.ssh_process.is_some() {
-                Color::Green
+            // Ports list with status indicators
+            let port_items: Vec<ListItem> = app.ports
+                .iter()
+                .map(|port| {
+                    let status_icon = if is_active { "▸" } else { "▹" };
+                    let port_color = if is_active { Color::Rgb(0, 255, 150) } else { Color::DarkGray };
+
+                    ListItem::new(Line::from(vec![
+                        Span::styled(status_icon, Style::default().fg(port_color)),
+                        Span::raw(" "),
+                        Span::styled(
+                            format!("localhost:{}", port),
+                            Style::default().fg(if is_active { Color::White } else { Color::Gray })
+                        ),
+                        Span::raw(" "),
+                        Span::styled(
+                            if is_active { "→" } else { "·" },
+                            Style::default().fg(Color::DarkGray)
+                        ),
+                        Span::raw(" "),
+                        Span::styled(
+                            format!("{}:{}", app.host.split('@').last().unwrap_or(&app.host), port),
+                            Style::default().fg(if is_active { Color::Rgb(150, 150, 255) } else { Color::DarkGray })
+                        ),
+                    ]))
+                })
+                .collect();
+
+            let ports_list = List::new(port_items)
+                .block(Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Rgb(80, 80, 120)))
+                    .title("TUNNELS"));
+            f.render_widget(ports_list, chunks[2]);
+
+            // Status bar
+            let status_color = if app.status.starts_with("✓") {
+                Color::Rgb(0, 255, 150)
+            } else if app.status.starts_with("✗") {
+                Color::Rgb(255, 50, 50)
             } else {
-                Color::Gray
+                Color::DarkGray
             };
 
             let status = Paragraph::new(app.status.clone())
                 .style(Style::default().fg(status_color))
-                .block(Block::default().borders(Borders::ALL).title("Status"));
-            f.render_widget(status, chunks[2]);
+                .block(Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Rgb(80, 80, 120))));
+            f.render_widget(status, chunks[3]);
         })?;
 
         if event::poll(std::time::Duration::from_millis(100))? {
