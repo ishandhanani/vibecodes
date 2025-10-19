@@ -5,7 +5,7 @@ Ultra-lightweight terminal UI for managing SSH port forwards with real-time heal
 ## Features
 
 - 🚀 **Presets** - Save your common configurations
-- 💚 **Health Checks** - Real-time per-port status monitoring
+- 💚 **Tunnel Monitoring** - Real-time per-port tunnel status
 - ⚡ **Fast** - Lightweight TUI with minimal dependencies
 - 🎨 **Futuristic UI** - Clean, color-coded status indicators
 
@@ -64,12 +64,14 @@ bore                      # Interactive mode (prompts for host/ports)
 - `x` - **Stop** tunnel
 - `q` - **Quit**
 
-## Health Status
+## Tunnel Status
 
-Each port shows real-time status:
-- `●` **Green** - Service healthy and responding
-- `●` **Red** - Tunnel up, but service down
+Each port shows real-time tunnel status:
+- `▸` **Green** - Tunnel port accessible
+- `▸` **Red** - Tunnel port not responding
 - `◐` **Yellow** - Checking status
 - `▹` **Gray** - Tunnel inactive
+
+**Note:** Status shows if the SSH tunnel is listening, not if the remote service is up. This is a limitation of how SSH port forwarding works - the tunnel accepts connections locally even if the remote service is down.
 
 Works with your SSH config!

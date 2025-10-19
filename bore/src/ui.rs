@@ -65,8 +65,8 @@ fn render_ports(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
 
             let (status_icon, port_color) = match (is_active, health_status) {
                 (false, _) => ("▹", Color::DarkGray),
-                (true, PortStatus::Healthy) => ("●", Color::Rgb(0, 255, 150)),
-                (true, PortStatus::Unhealthy) => ("●", Color::Rgb(255, 50, 50)),
+                (true, PortStatus::Healthy) => ("▸", Color::Rgb(0, 255, 150)),
+                (true, PortStatus::Unhealthy) => ("▸", Color::Rgb(255, 50, 50)),
                 (true, PortStatus::Unknown) => ("◐", Color::Rgb(255, 200, 0)),
             };
 
