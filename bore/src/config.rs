@@ -66,10 +66,10 @@ ports = [5432, 8000]
 }
 
 fn get_config_path() -> Result<PathBuf, String> {
-    let config_dir = dirs::config_dir()
-        .ok_or_else(|| "Could not find config directory".to_string())?;
+    let home_dir = dirs::home_dir()
+        .ok_or_else(|| "Could not find home directory".to_string())?;
 
-    Ok(config_dir.join("bore").join("bore.toml"))
+    Ok(home_dir.join(".config").join("bore").join("bore.toml"))
 }
 
 pub fn get_config_path_display() -> String {
