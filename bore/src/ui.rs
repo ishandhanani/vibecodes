@@ -38,14 +38,19 @@ fn render_title(f: &mut Frame, area: ratatui::layout::Rect) {
 }
 
 fn render_host(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
-    let is_active = app.ssh_process.is_some();
-    let host_status = if is_active { "●" } else { "○" };
-    let host_color = if is_active { Color::Rgb(0, 255, 150) } else { Color::Gray };
+    let active_tunnels = app.ssh_processes.iter().filter(|p| p.is_some()).count();
+    let host_status = if active_tunnels > 0 { "●" } else { "○" };
+    let host_color = if active_tunnels > 0 { Color::Rgb(0, 255, 150) } else { Color::Gray };
 
     let host_info = Paragraph::new(Line::from(vec![
         Span::styled(host_status, Style::default().fg(host_color).add_modifier(Modifier::BOLD)),
         Span::raw(" "),
         Span::styled(&app.host, Style::default().fg(Color::Rgb(150, 150, 255))),
+        Span::raw(" "),
+        Span::styled(
+            format!("[{}/{}]", active_tunnels, app.ports.len()),
+            Style::default().fg(Color::DarkGray)
+        ),
     ]))
     .block(Block::default()
         .borders(Borders::ALL)
@@ -55,29 +60,33 @@ fn render_host(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
 }
 
 fn render_ports(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
-    let is_active = app.ssh_process.is_some();
-
     let port_items: Vec<ListItem> = app.ports
         .iter()
         .enumerate()
         .map(|(idx, port)| {
+            let is_tunnel_active = app.ssh_processes[idx].is_some();
             let health_status = app.port_status[idx];
+            let is_selected = idx == app.selected_index;
 
-            let (status_icon, port_color) = match (is_active, health_status) {
+            let (status_icon, port_color) = match (is_tunnel_active, health_status) {
                 (false, _) => ("▹", Color::DarkGray),
                 (true, PortStatus::Healthy) => ("▸", Color::Rgb(0, 255, 150)),
                 (true, PortStatus::Unhealthy) => ("▸", Color::Rgb(255, 50, 50)),
                 (true, PortStatus::Unknown) => ("◐", Color::Rgb(255, 200, 0)),
             };
 
-            let text_color = match (is_active, health_status) {
+            let text_color = match (is_tunnel_active, health_status) {
                 (false, _) => Color::Gray,
                 (true, PortStatus::Healthy) => Color::White,
                 (true, PortStatus::Unhealthy) => Color::Rgb(255, 150, 150),
                 (true, PortStatus::Unknown) => Color::Rgb(200, 200, 200),
             };
 
-            ListItem::new(Line::from(vec![
+            let line_spans = vec![
+                Span::styled(
+                    if is_selected { "▶ " } else { "  " },
+                    Style::default().fg(Color::Rgb(0, 255, 255)).add_modifier(Modifier::BOLD)
+                ),
                 Span::styled(status_icon, Style::default().fg(port_color)),
                 Span::raw(" "),
                 Span::styled(
@@ -86,15 +95,23 @@ fn render_ports(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
                 ),
                 Span::raw(" "),
                 Span::styled(
-                    if is_active { "→" } else { "·" },
+                    if is_tunnel_active { "→" } else { "·" },
                     Style::default().fg(Color::DarkGray)
                 ),
                 Span::raw(" "),
                 Span::styled(
                     format!("{}:{}", app.host.split('@').last().unwrap_or(&app.host), port),
-                    Style::default().fg(if is_active { Color::Rgb(150, 150, 255) } else { Color::DarkGray })
+                    Style::default().fg(if is_tunnel_active { Color::Rgb(150, 150, 255) } else { Color::DarkGray })
                 ),
-            ]))
+            ];
+
+            let mut item = ListItem::new(Line::from(line_spans));
+
+            if is_selected {
+                item = item.style(Style::default().bg(Color::Rgb(20, 40, 60)));
+            }
+
+            item
         })
         .collect();
 

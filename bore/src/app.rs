@@ -13,32 +13,50 @@ pub enum PortStatus {
 pub struct App {
     pub ports: Vec<u16>,
     pub port_status: Vec<PortStatus>,
+    pub ssh_processes: Vec<Option<Child>>,
     pub host: String,
-    pub ssh_process: Option<Child>,
     pub status: String,
+    pub selected_index: usize,
     last_health_check: Option<Instant>,
 }
 
 impl App {
     pub fn new(host: String, ports: Vec<u16>) -> App {
         let port_count = ports.len();
+        let ssh_processes = (0..port_count).map(|_| None).collect();
         App {
             ports,
             port_status: vec![PortStatus::Unknown; port_count],
+            ssh_processes,
             host,
-            ssh_process: None,
-            status: String::from("Press 's' to start, 'q' to quit"),
+            status: String::from("j/k navigate • Enter toggle • q quit"),
+            selected_index: 0,
             last_health_check: None,
         }
     }
 
-    pub fn check_port_health(&mut self) {
-        if self.ssh_process.is_none() {
-            for status in &mut self.port_status {
-                *status = PortStatus::Unknown;
-            }
-            return;
+    pub fn move_selection_up(&mut self) {
+        if self.selected_index > 0 {
+            self.selected_index -= 1;
         }
+    }
+
+    pub fn move_selection_down(&mut self) {
+        if self.selected_index < self.ports.len().saturating_sub(1) {
+            self.selected_index += 1;
+        }
+    }
+
+    pub fn toggle_selected_tunnel(&mut self) {
+        let idx = self.selected_index;
+        if self.ssh_processes[idx].is_some() {
+            self.stop_tunnel(idx);
+        } else {
+            self.start_tunnel(idx);
+        }
+    }
+
+    pub fn check_port_health(&mut self) {
 
         for (idx, port) in self.ports.iter().enumerate() {
             let addr = format!("127.0.0.1:{}", port);
@@ -62,25 +80,20 @@ impl App {
     }
 
     pub fn should_check_health(&self) -> bool {
-        if self.ssh_process.is_none() {
-            return false;
-        }
-
         match self.last_health_check {
             None => true,
             Some(last) => last.elapsed() > Duration::from_secs(2),
         }
     }
 
-    pub fn start_ssh(&mut self) {
-        let mut args = vec!["-N".to_string()];
-
-        for port in &self.ports {
-            args.push("-L".to_string());
-            args.push(format!("{}:localhost:{}", port, port));
-        }
-
-        args.push(self.host.clone());
+    pub fn start_tunnel(&mut self, idx: usize) {
+        let port = self.ports[idx];
+        let args = vec![
+            "-N".to_string(),
+            "-L".to_string(),
+            format!("{}:localhost:{}", port, port),
+            self.host.clone(),
+        ];
 
         match Command::new("ssh")
             .args(&args)
@@ -99,33 +112,44 @@ impl App {
                                 .filter_map(|line| line.ok())
                                 .collect();
                             if !errors.is_empty() {
-                                self.status = format!("✗ SSH failed: {}", errors.join("; "));
+                                self.status = format!("✗ Port {} failed: {}", port, errors.join("; "));
                             } else {
-                                self.status = format!("✗ SSH exited with code {:?}", status.code());
+                                self.status = format!("✗ Port {} exited with code {:?}", port, status.code());
                             }
                         } else {
-                            self.status = format!("✗ SSH failed with code {:?}", status.code());
+                            self.status = format!("✗ Port {} failed with code {:?}", port, status.code());
                         }
                     }
                     Ok(None) => {
-                        self.ssh_process = Some(child);
-                        self.status = String::from("✓ SSH tunnel active");
+                        self.ssh_processes[idx] = Some(child);
+                        self.status = format!("✓ Port {} tunnel active", port);
                     }
                     Err(e) => {
-                        self.status = format!("✗ Error checking SSH status: {}", e);
+                        self.status = format!("✗ Port {} error: {}", port, e);
                     }
                 }
             }
             Err(e) => {
-                self.status = format!("✗ Failed to start SSH: {}", e);
+                self.status = format!("✗ Failed to start port {}: {}", port, e);
             }
         }
     }
 
-    pub fn stop_ssh(&mut self) {
-        if let Some(mut child) = self.ssh_process.take() {
+    pub fn stop_tunnel(&mut self, idx: usize) {
+        if let Some(mut child) = self.ssh_processes[idx].take() {
             let _ = child.kill();
-            self.status = String::from("Press 's' to start, 'q' to quit");
+            let _ = child.wait();
+            let port = self.ports[idx];
+            self.status = format!("Stopped port {}", port);
+        }
+    }
+
+    pub fn stop_all_tunnels(&mut self) {
+        for process in &mut self.ssh_processes {
+            if let Some(mut child) = process.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
         }
     }
 }

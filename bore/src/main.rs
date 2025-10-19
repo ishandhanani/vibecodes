@@ -165,16 +165,17 @@ fn run_app<B: ratatui::backend::Backend>(
             if let Event::Key(key) = event::read()? {
                 match key.code {
                     KeyCode::Char('q') => {
-                        app.stop_ssh();
+                        app.stop_all_tunnels();
                         return Ok(());
                     }
-                    KeyCode::Char('s') => {
-                        if app.ssh_process.is_none() {
-                            app.start_ssh();
-                        }
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        app.move_selection_up();
                     }
-                    KeyCode::Char('x') => {
-                        app.stop_ssh();
+                    KeyCode::Char('j') | KeyCode::Down => {
+                        app.move_selection_down();
+                    }
+                    KeyCode::Enter | KeyCode::Char(' ') => {
+                        app.toggle_selected_tunnel();
                     }
                     _ => {}
                 }

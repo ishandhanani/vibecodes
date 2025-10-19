@@ -60,9 +60,9 @@ bore                      # Interactive mode (prompts for host/ports)
 
 ## TUI Controls
 
-- `s` - **Start** SSH tunnel
-- `x` - **Stop** tunnel
-- `q` - **Quit**
+- `j/k` (or `↑/↓`) - **Navigate** between ports
+- `Enter/Space` - **Toggle** selected tunnel (start/stop)
+- `q` - **Quit** (stops all tunnels)
 
 ## Tunnel Status
 
