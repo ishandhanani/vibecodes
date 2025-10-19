@@ -12,22 +12,75 @@ use ratatui::{
     Terminal,
 };
 use std::io::{self, BufRead, BufReader, Write};
+use std::net::TcpStream;
 use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
+
+#[derive(Clone, Copy, PartialEq)]
+enum PortStatus {
+    Unknown,
+    Healthy,
+    Unhealthy,
+}
 
 struct App {
     ports: Vec<u16>,
+    port_status: Vec<PortStatus>,
     host: String,
     ssh_process: Option<Child>,
     status: String,
+    last_health_check: Option<Instant>,
 }
 
 impl App {
     fn new(host: String, ports: Vec<u16>) -> App {
+        let port_count = ports.len();
         App {
             ports,
+            port_status: vec![PortStatus::Unknown; port_count],
             host,
             ssh_process: None,
             status: String::from("Press 's' to start, 'q' to quit"),
+            last_health_check: None,
+        }
+    }
+
+    fn check_port_health(&mut self) {
+        if self.ssh_process.is_none() {
+            // Reset all to unknown if tunnel is down
+            for status in &mut self.port_status {
+                *status = PortStatus::Unknown;
+            }
+            return;
+        }
+
+        for (idx, port) in self.ports.iter().enumerate() {
+            // Try to connect to localhost:port with a very short timeout
+            let addr = format!("127.0.0.1:{}", port);
+            match TcpStream::connect_timeout(
+                &addr.parse().unwrap(),
+                Duration::from_millis(100),
+            ) {
+                Ok(_) => {
+                    self.port_status[idx] = PortStatus::Healthy;
+                }
+                Err(_) => {
+                    self.port_status[idx] = PortStatus::Unhealthy;
+                }
+            }
+        }
+
+        self.last_health_check = Some(Instant::now());
+    }
+
+    fn should_check_health(&self) -> bool {
+        if self.ssh_process.is_none() {
+            return false;
+        }
+
+        match self.last_health_check {
+            None => true,
+            Some(last) => last.elapsed() > Duration::from_secs(2),
         }
     }
 
@@ -186,16 +239,30 @@ fn run_app<B: ratatui::backend::Backend>(
             // Ports list with status indicators
             let port_items: Vec<ListItem> = app.ports
                 .iter()
-                .map(|port| {
-                    let status_icon = if is_active { "▸" } else { "▹" };
-                    let port_color = if is_active { Color::Rgb(0, 255, 150) } else { Color::DarkGray };
+                .enumerate()
+                .map(|(idx, port)| {
+                    let health_status = app.port_status[idx];
+
+                    let (status_icon, port_color) = match (is_active, health_status) {
+                        (false, _) => ("▹", Color::DarkGray),
+                        (true, PortStatus::Healthy) => ("●", Color::Rgb(0, 255, 150)),
+                        (true, PortStatus::Unhealthy) => ("●", Color::Rgb(255, 50, 50)),
+                        (true, PortStatus::Unknown) => ("◐", Color::Rgb(255, 200, 0)),
+                    };
+
+                    let text_color = match (is_active, health_status) {
+                        (false, _) => Color::Gray,
+                        (true, PortStatus::Healthy) => Color::White,
+                        (true, PortStatus::Unhealthy) => Color::Rgb(255, 150, 150),
+                        (true, PortStatus::Unknown) => Color::Rgb(200, 200, 200),
+                    };
 
                     ListItem::new(Line::from(vec![
                         Span::styled(status_icon, Style::default().fg(port_color)),
                         Span::raw(" "),
                         Span::styled(
                             format!("localhost:{}", port),
-                            Style::default().fg(if is_active { Color::White } else { Color::Gray })
+                            Style::default().fg(text_color)
                         ),
                         Span::raw(" "),
                         Span::styled(
@@ -234,6 +301,11 @@ fn run_app<B: ratatui::backend::Backend>(
                     .border_style(Style::default().fg(Color::Rgb(80, 80, 120))));
             f.render_widget(status, chunks[3]);
         })?;
+
+        // Check port health periodically
+        if app.should_check_health() {
+            app.check_port_health();
+        }
 
         if event::poll(std::time::Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
