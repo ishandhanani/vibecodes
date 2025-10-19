@@ -33,7 +33,7 @@ You'll be prompted for host and ports.
 cargo run -- --init-config
 ```
 
-2. **Edit** `~/.config/bore/config.toml`:
+2. **Edit** `~/.config/bore/bore.toml`:
 ```toml
 [presets.work]
 host = "dev"

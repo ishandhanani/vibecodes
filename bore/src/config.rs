@@ -45,7 +45,7 @@ impl Config {
         }
 
         let example = r#"# Bore SSH Port Forward Presets
-# Location: ~/.config/bore/config.toml
+# Location: ~/.config/bore/bore.toml
 
 [presets.work]
 host = "dev"
@@ -69,11 +69,11 @@ fn get_config_path() -> Result<PathBuf, String> {
     let config_dir = dirs::config_dir()
         .ok_or_else(|| "Could not find config directory".to_string())?;
 
-    Ok(config_dir.join("bore").join("config.toml"))
+    Ok(config_dir.join("bore").join("bore.toml"))
 }
 
 pub fn get_config_path_display() -> String {
     get_config_path()
         .map(|p| p.display().to_string())
-        .unwrap_or_else(|_| "~/.config/bore/config.toml".to_string())
+        .unwrap_or_else(|_| "~/.config/bore/bore.toml".to_string())
 }
