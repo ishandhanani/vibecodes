@@ -46,8 +46,29 @@ impl App {
                 &addr.parse().unwrap(),
                 Duration::from_millis(100),
             ) {
-                Ok(_) => {
-                    self.port_status[idx] = PortStatus::Healthy;
+                Ok(stream) => {
+                    // Set read timeout to verify connection is real
+                    if stream.set_read_timeout(Some(Duration::from_millis(50))).is_ok() {
+                        // Try a peek to see if there's any data or if connection is alive
+                        let mut buf = [0u8; 1];
+                        match stream.peek(&mut buf) {
+                            Ok(_) => {
+                                // Connection is alive and has data
+                                self.port_status[idx] = PortStatus::Healthy;
+                            }
+                            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock
+                                       || e.kind() == std::io::ErrorKind::TimedOut => {
+                                // Connection is alive but no data yet (normal for most services)
+                                self.port_status[idx] = PortStatus::Healthy;
+                            }
+                            Err(_) => {
+                                // Connection failed/closed
+                                self.port_status[idx] = PortStatus::Unhealthy;
+                            }
+                        }
+                    } else {
+                        self.port_status[idx] = PortStatus::Unhealthy;
+                    }
                 }
                 Err(_) => {
                     self.port_status[idx] = PortStatus::Unhealthy;
