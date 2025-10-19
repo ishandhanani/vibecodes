@@ -11,8 +11,8 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph},
     Terminal,
 };
-use std::io::{self, Write};
-use std::process::{Child, Command};
+use std::io::{self, BufRead, BufReader, Write};
+use std::process::{Child, Command, Stdio};
 
 struct App {
     ports: Vec<u16>,
@@ -41,13 +41,45 @@ impl App {
 
         args.push(self.host.clone());
 
-        match Command::new("ssh").args(&args).spawn() {
-            Ok(child) => {
-                self.ssh_process = Some(child);
-                self.status = String::from("✓ SSH tunnel active");
+        match Command::new("ssh")
+            .args(&args)
+            .stderr(Stdio::piped())
+            .spawn()
+        {
+            Ok(mut child) => {
+                // Check if process is still running after a brief moment
+                std::thread::sleep(std::time::Duration::from_millis(200));
+
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        // Process exited, read stderr for error
+                        let stderr = child.stderr.take();
+                        if let Some(stderr) = stderr {
+                            let reader = BufReader::new(stderr);
+                            let errors: Vec<String> = reader.lines()
+                                .filter_map(|line| line.ok())
+                                .collect();
+                            if !errors.is_empty() {
+                                self.status = format!("✗ SSH failed: {}", errors.join("; "));
+                            } else {
+                                self.status = format!("✗ SSH exited with code {:?}", status.code());
+                            }
+                        } else {
+                            self.status = format!("✗ SSH failed with code {:?}", status.code());
+                        }
+                    }
+                    Ok(None) => {
+                        // Still running, success!
+                        self.ssh_process = Some(child);
+                        self.status = String::from("✓ SSH tunnel active");
+                    }
+                    Err(e) => {
+                        self.status = format!("✗ Error checking SSH status: {}", e);
+                    }
+                }
             }
             Err(e) => {
-                self.status = format!("✗ Error: {}", e);
+                self.status = format!("✗ Failed to start SSH: {}", e);
             }
         }
     }
