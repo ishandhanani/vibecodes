@@ -1,0 +1,125 @@
+# =============================================================================
+# digest configuration
+# =============================================================================
+# Location: ~/.config/digest/config.yaml (default) or use --config flag
+#
+# REQUIRED ENVIRONMENT VARIABLES:
+#   GITHUB_TOKEN        - GitHub personal access token with repo read access
+#   OPENROUTER_API_KEY  - OpenRouter API key (optional, for AI analysis)
+#
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# GLOBAL SETTINGS
+# -----------------------------------------------------------------------------
+
+# GitHub username - used for "mentions" watch type to find issues/PRs involving you
+user: ishandhanani
+
+# How many days back to search for activity (default: 1)
+days_back: 1
+
+# Global interests - topics you care about across ALL repos
+# These are passed to the AI for priority scoring
+# Example: ["kubernetes", "rust", "performance"]
+interests: []
+
+# Global exclusions - topics to deprioritize (AI will give these P1)
+# These items will be collapsed in the output
+exclude:
+  - VLM
+  - vision model
+  - AMD
+  - ROCm
+  - gfx942
+  - Ascend
+  - Huawei
+  - NPU
+  - Intel XPU
+
+# -----------------------------------------------------------------------------
+# REPOS - List of repositories to track
+# -----------------------------------------------------------------------------
+# Each repo has:
+#   name:      Display name (shown in output headers)
+#   repo:      GitHub repo in "owner/repo" format
+#   interests: Topics specific to this repo (merged with global interests for AI)
+#   watches:   List of watch types to track
+
+repos:
+  - name: SGLang
+    repo: sgl-project/sglang
+    
+    # Repo-specific interests for AI priority scoring
+    interests:
+      - nixl
+      - p/d disaggregation
+      - prefill/decode
+      - tracing
+      - metrics
+      - data parallel attention
+      - dp attention
+      - deepseek
+    
+    watches:
+      # -------------------------------------------------------------------------
+      # WATCH TYPES
+      # -------------------------------------------------------------------------
+      #
+      # mentions:
+      #   Find open issues/PRs where you are involved (author, assignee, mentioned, commenter)
+      #   Uses GitHub's "involves:USERNAME" search qualifier
+      #
+      # new_prs:
+      #   Find recently opened PRs (uses GitHub's pulls API)
+      #
+      # issues:
+      #   Find open issues, optionally filtered by keywords
+      #   Options:
+      #     keywords: ["keyword1", "keyword2"]  # Optional - filter by these terms
+      #
+      # labeled:
+      #   Find open issues/PRs with a specific label
+      #   Options:
+      #     label: "label name"  # Required
+      #
+      # topics:
+      #   Search for open issues/PRs matching this repo's interests
+      #   Searches title/body for each interest keyword
+      #   Can be noisy if you have many interests
+      # -------------------------------------------------------------------------
+      
+      - type: mentions
+      - type: topics
+
+  - name: Dynamo
+    repo: ai-dynamo/dynamo
+    interests:
+      - sglang
+    watches:
+      - type: issues
+        keywords:
+          - sglang
+      - type: labeled
+        label: external contribution
+
+# -----------------------------------------------------------------------------
+# AI SETTINGS
+# -----------------------------------------------------------------------------
+# Uses OpenRouter API for AI-powered analysis
+# Requires OPENROUTER_API_KEY environment variable
+
+ai:
+  # Enable/disable AI analysis (default: true)
+  enabled: true
+  
+  # OpenRouter model identifier
+  # Popular options:
+  #   - openai/gpt-4o-mini      (fast, cheap)
+  #   - openai/gpt-4o           (best quality)
+  #   - anthropic/claude-3-haiku (fast)
+  #   - anthropic/claude-3-sonnet (balanced)
+  #   - google/gemini-flash-1.5  (fast)
+  #   - x-ai/grok-4.1-fast       (fast)
+  # See: https://openrouter.ai/models
+  model: x-ai/grok-4.1-fast

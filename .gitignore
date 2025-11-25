@@ -15,3 +15,7 @@ Cargo.lock
 *.swp
 *.swo
 *~
+
+# Digest
+digest/.env
+digest/file.md
