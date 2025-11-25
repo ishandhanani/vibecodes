@@ -4,7 +4,7 @@
 # Location: ~/.config/digest/config.yaml (default) or use --config flag
 #
 # REQUIRED ENVIRONMENT VARIABLES:
-#   GITHUB_TOKEN        - GitHub personal access token with repo read access
+#   TOKEN               - GitHub personal access token with repo read access
 #   OPENROUTER_API_KEY  - OpenRouter API key (optional, for AI analysis)
 #
 # =============================================================================

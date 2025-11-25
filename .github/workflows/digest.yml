@@ -24,10 +24,10 @@ jobs:
               working-directory: ./digest
               run: go build -o digest .
 
-            - name: Run digest
-              working-directory: ./digest
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+      - name: Run digest
+        working-directory: ./digest
+        env:
+          TOKEN: ${{ secrets.GH_PAT }}
                   OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
                   DIGEST_LOG_LEVEL: info
               run: |

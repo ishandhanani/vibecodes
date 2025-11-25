@@ -128,7 +128,7 @@ Flags:
   -o, --output  Write markdown to file instead of stdout
 
 Environment variables:
-  GITHUB_TOKEN        Required - GitHub API token
+  TOKEN               Required - GitHub API token
   OPENROUTER_API_KEY  Optional - OpenRouter API key for AI analysis
   DIGEST_LOG_LEVEL    Log level: debug, info, warn, error, silent (default: info)
 

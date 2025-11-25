@@ -69,9 +69,9 @@ type Pull struct {
 }
 
 func ghToken() (string, error) {
-	t := os.Getenv("GITHUB_TOKEN")
+	t := os.Getenv("TOKEN")
 	if t == "" {
-		return "", errors.New("GITHUB_TOKEN is not set")
+		return "", errors.New("TOKEN is not set")
 	}
 	return t, nil
 }
