@@ -19,14 +19,17 @@ const (
 
 // DigestItem represents a single item in the digest
 type DigestItem struct {
-	Section  string
-	Title    string
-	Sub      string
-	URL      string
-	When     time.Time
-	RepoName string
-	Priority int    // 1-5, set by AI analysis
-	Summary  string // AI-generated summary
+	Section     string
+	Topic       string // the topic this item matched
+	Title       string
+	Sub         string
+	URL         string
+	When        time.Time
+	RepoName    string
+	ItemType    string // "issue" or "pr"
+	UserMention bool   // true if user is involved (author, mentioned, etc.)
+	Priority    int    // 1-5, set by AI analysis
+	Summary     string // AI-generated summary
 }
 
 // GitHub API response types
@@ -146,47 +149,63 @@ func listPRs(ctx context.Context, repo string, since time.Time, perPage int) ([]
 	return out, nil
 }
 
-// FetchWatches fetches all items for a repo's watches
+// FetchWatches fetches all items for a repo's topics and watches
 func FetchWatches(ctx context.Context, repo RepoConfig, user string, since time.Time) ([]DigestItem, error) {
 	var items []DigestItem
 	dateFmt := since.UTC().Format("2006-01-02")
 
+	logDebug("Fetching %s: %d topics, %d watches", repo.Name, len(repo.Topics), len(repo.Watches))
+
+	// Fetch topic-based items first
+	if len(repo.Topics) > 0 {
+		results, err := fetchByTopics(ctx, repo, user, dateFmt)
+		if err != nil {
+			logWarn("%s topics: %v", repo.Name, err)
+		} else {
+			logDebug("%s topics: found %d items", repo.Name, len(results))
+			items = append(items, results...)
+		}
+	}
+
+	// Then handle additional watches
 	for _, watch := range repo.Watches {
 		switch watch.Type {
 		case WatchMentions:
 			results, err := fetchMentions(ctx, repo, user, dateFmt)
 			if err != nil {
-				return nil, fmt.Errorf("%s mentions: %w", repo.Name, err)
+				logWarn("%s mentions: %v", repo.Name, err)
+				continue
 			}
 			items = append(items, results...)
 
 		case WatchNewPRs:
 			results, err := fetchNewPRs(ctx, repo, since)
 			if err != nil {
-				return nil, fmt.Errorf("%s new_prs: %w", repo.Name, err)
+				logWarn("%s new_prs: %v", repo.Name, err)
+				continue
 			}
 			items = append(items, results...)
 
 		case WatchIssues:
 			results, err := fetchIssues(ctx, repo, watch.Keywords, dateFmt)
 			if err != nil {
-				return nil, fmt.Errorf("%s issues: %w", repo.Name, err)
+				logWarn("%s issues: %v", repo.Name, err)
+				continue
 			}
 			items = append(items, results...)
 
 		case WatchLabeled:
 			results, err := fetchLabeled(ctx, repo, watch.Label, dateFmt)
 			if err != nil {
-				return nil, fmt.Errorf("%s labeled: %w", repo.Name, err)
+				logWarn("%s labeled %q: %v", repo.Name, watch.Label, err)
+				continue
 			}
+			logDebug("%s labeled %q: found %d items", repo.Name, watch.Label, len(results))
 			items = append(items, results...)
 
 		case WatchTopics:
-			results, err := fetchTopics(ctx, repo, dateFmt)
-			if err != nil {
-				return nil, fmt.Errorf("%s topics: %w", repo.Name, err)
-			}
-			items = append(items, results...)
+			// Handled above via repo.Topics
+			continue
 		}
 	}
 
@@ -324,21 +343,20 @@ func fetchLabeled(ctx context.Context, repo RepoConfig, label, dateFmt string) (
 	return items, nil
 }
 
-func fetchTopics(ctx context.Context, repo RepoConfig, dateFmt string) ([]DigestItem, error) {
-	if len(repo.Interests) == 0 {
+func fetchByTopics(ctx context.Context, repo RepoConfig, user, dateFmt string) ([]DigestItem, error) {
+	if len(repo.Topics) == 0 {
 		return nil, nil
 	}
 
 	var items []DigestItem
 	seen := make(map[int]bool) // dedupe by issue number
 
-	// Search for each interest topic (only open items)
-	for _, topic := range repo.Interests {
-		// Search open issues
+	for _, topic := range repo.Topics {
+		// Search open issues for this topic
 		issueQuery := fmt.Sprintf(`repo:%s "%s" updated:>=%s is:issue is:open`, repo.Repo, topic, dateFmt)
-		issueResults, err := searchIssues(ctx, issueQuery, 20)
+		issueResults, err := searchIssues(ctx, issueQuery, 15)
 		if err != nil {
-			logDebug("Topic search failed for %q: %v", topic, err)
+			logDebug("Topic %q issues failed: %v", topic, err)
 			continue
 		}
 		for _, it := range issueResults {
@@ -346,20 +364,25 @@ func fetchTopics(ctx context.Context, repo RepoConfig, dateFmt string) ([]Digest
 				continue
 			}
 			seen[it.Number] = true
+			mentioned := isUserInvolved(it, user)
 			items = append(items, DigestItem{
-				Section:  fmt.Sprintf("%s · %s", repo.Name, topic),
-				Title:    fmt.Sprintf("#%d %s", it.Number, it.Title),
-				Sub:      fmt.Sprintf("issue updated %s by @%s", humanWhen(it.UpdatedAt), it.User.Login),
-				URL:      it.HTMLURL,
-				When:     it.UpdatedAt,
-				RepoName: repo.Name,
+				Section:     repo.Name,
+				Topic:       topic,
+				Title:       fmt.Sprintf("#%d %s", it.Number, it.Title),
+				Sub:         fmt.Sprintf("by @%s · %s", it.User.Login, humanWhen(it.UpdatedAt)),
+				URL:         it.HTMLURL,
+				When:        it.UpdatedAt,
+				RepoName:    repo.Name,
+				ItemType:    "issue",
+				UserMention: mentioned,
 			})
 		}
 
-		// Search open PRs
+		// Search open PRs for this topic
 		prQuery := fmt.Sprintf(`repo:%s "%s" updated:>=%s is:pr is:open`, repo.Repo, topic, dateFmt)
-		prResults, err := searchIssues(ctx, prQuery, 20)
+		prResults, err := searchIssues(ctx, prQuery, 15)
 		if err != nil {
+			logDebug("Topic %q PRs failed: %v", topic, err)
 			continue
 		}
 		for _, it := range prResults {
@@ -367,18 +390,27 @@ func fetchTopics(ctx context.Context, repo RepoConfig, dateFmt string) ([]Digest
 				continue
 			}
 			seen[it.Number] = true
+			mentioned := isUserInvolved(it, user)
 			items = append(items, DigestItem{
-				Section:  fmt.Sprintf("%s · %s", repo.Name, topic),
-				Title:    fmt.Sprintf("#%d %s", it.Number, it.Title),
-				Sub:      fmt.Sprintf("PR updated %s by @%s", humanWhen(it.UpdatedAt), it.User.Login),
-				URL:      it.HTMLURL,
-				When:     it.UpdatedAt,
-				RepoName: repo.Name,
+				Section:     repo.Name,
+				Topic:       topic,
+				Title:       fmt.Sprintf("#%d %s", it.Number, it.Title),
+				Sub:         fmt.Sprintf("by @%s · %s", it.User.Login, humanWhen(it.UpdatedAt)),
+				URL:         it.HTMLURL,
+				When:        it.UpdatedAt,
+				RepoName:    repo.Name,
+				ItemType:    "pr",
+				UserMention: mentioned,
 			})
 		}
 	}
 
 	return items, nil
+}
+
+// isUserInvolved checks if the user is author or mentioned
+func isUserInvolved(item IssueOrPR, user string) bool {
+	return item.User.Login == user
 }
 
 func issueToDigestItem(repo RepoConfig, it IssueOrPR, keyword string) DigestItem {

@@ -28,11 +28,11 @@ type Watch struct {
 
 // RepoConfig defines a repository to watch
 type RepoConfig struct {
-	Name      string   `yaml:"name"`
-	Repo      string   `yaml:"repo"` // owner/repo format
-	Watches   []Watch  `yaml:"watches"`
-	Interests []string `yaml:"interests,omitempty"` // topics of interest for this repo
-	Exclude   []string `yaml:"exclude,omitempty"`   // topics to deprioritize/filter out
+	Name    string   `yaml:"name"`
+	Repo    string   `yaml:"repo"`              // owner/repo format
+	Topics  []string `yaml:"topics,omitempty"`  // topics to track (each becomes a section)
+	Watches []Watch  `yaml:"watches,omitempty"` // additional watches
+	Exclude []string `yaml:"exclude,omitempty"` // topics to deprioritize/filter out
 }
 
 // AIConfig defines AI analysis settings
@@ -43,12 +43,11 @@ type AIConfig struct {
 
 // Config is the root configuration
 type Config struct {
-	User      string       `yaml:"user"`
-	DaysBack  int          `yaml:"days_back"`
-	Interests []string     `yaml:"interests,omitempty"` // global interests (merged with per-repo)
-	Exclude   []string     `yaml:"exclude,omitempty"`   // global exclusions (topics to ignore)
-	Repos     []RepoConfig `yaml:"repos"`
-	AI        AIConfig     `yaml:"ai"`
+	User     string       `yaml:"user"`
+	DaysBack int          `yaml:"days_back"`
+	Exclude  []string     `yaml:"exclude,omitempty"` // global exclusions (topics to ignore)
+	Repos    []RepoConfig `yaml:"repos"`
+	AI       AIConfig     `yaml:"ai"`
 }
 
 // DefaultConfig returns a sensible default configuration
@@ -60,27 +59,19 @@ func DefaultConfig() Config {
 			{
 				Name: "SGLang",
 				Repo: "sgl-project/sglang",
-				Interests: []string{
+				Topics: []string{
 					"nixl",
-					"p/d disaggregation", "prefill/decode", "prefill", "decode",
-					"tracing", "metrics",
-					"data parallel attention", "dp attention",
-					"deepseek", "deepseek v3", "deepseek r1",
-				},
-				Watches: []Watch{
-					{Type: WatchMentions},
-					{Type: WatchNewPRs},
-					{Type: WatchTopics}, // search for items matching interests
+					"p/d disaggregation",
+					"tracing",
+					"metrics",
+					"dp attention",
 				},
 			},
 			{
-				Name:      "Dynamo",
-				Repo:      "ai-dynamo/dynamo",
-				Interests: []string{"sglang"},
+				Name:   "Dynamo",
+				Repo:   "ai-dynamo/dynamo",
+				Topics: []string{"sglang"},
 				Watches: []Watch{
-					// No mentions - user not involved in this repo
-					{Type: WatchNewPRs},
-					{Type: WatchTopics},
 					{Type: WatchLabeled, Label: "external contribution"},
 				},
 			},
@@ -144,21 +135,15 @@ func LoadConfigFrom(path string) (Config, error) {
 	return cfg, nil
 }
 
-// AllInterests returns all interests from global + all repos (deduplicated)
+// AllInterests returns all topics from all repos (deduplicated)
 func (c Config) AllInterests() []string {
 	seen := make(map[string]bool)
 	var all []string
-	for _, i := range c.Interests {
-		if !seen[i] {
-			seen[i] = true
-			all = append(all, i)
-		}
-	}
 	for _, repo := range c.Repos {
-		for _, i := range repo.Interests {
-			if !seen[i] {
-				seen[i] = true
-				all = append(all, i)
+		for _, t := range repo.Topics {
+			if !seen[t] {
+				seen[t] = true
+				all = append(all, t)
 			}
 		}
 	}
@@ -210,8 +195,8 @@ func (c Config) Validate() error {
 		if repo.Repo == "" {
 			return fmt.Errorf("repo %q has no repo path", repo.Name)
 		}
-		if len(repo.Watches) == 0 {
-			return fmt.Errorf("repo %q has no watches", repo.Name)
+		if len(repo.Topics) == 0 && len(repo.Watches) == 0 {
+			return fmt.Errorf("repo %q has no topics or watches", repo.Name)
 		}
 		for _, w := range repo.Watches {
 			switch w.Type {

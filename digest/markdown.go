@@ -25,96 +25,22 @@ func GenerateMarkdown(items []DigestItem, cfg Config) string {
 	// Header
 	sb.WriteString("# GitHub Digest\n\n")
 	sb.WriteString(fmt.Sprintf("**Generated:** %s  \n", time.Now().Format("Mon Jan 2, 2006 3:04 PM")))
-	sb.WriteString(fmt.Sprintf("**Looking back:** %d day(s)  \n", cfg.DaysBack))
-	sb.WriteString(fmt.Sprintf("**Items:** %d\n\n", len(items)))
+	sb.WriteString(fmt.Sprintf("**Looking back:** %d day(s) · **Items:** %d\n\n", cfg.DaysBack, len(items)))
 
 	if len(items) == 0 {
 		sb.WriteString("_No activity found._\n")
 		return sb.String()
 	}
 
-	// Check if AI analysis ran (any item has priority > 0)
-	aiRan := false
-	for _, item := range items {
-		if item.Priority > 0 {
-			aiRan = true
-			break
-		}
+	// Group by repo, then by topic
+	type topicData struct {
+		issues []DigestItem
+		prs    []DigestItem
 	}
-
-	if aiRan {
-		// AI mode: organize by priority
-		sb.WriteString(generateAIMode(items))
-	} else {
-		// No AI: organize by repo
-		sb.WriteString(generateRepoMode(items))
-	}
-
-	return sb.String()
-}
-
-func generateAIMode(items []DigestItem) string {
-	var sb strings.Builder
-
-	// Sort by priority desc, then time
-	sort.Slice(items, func(i, j int) bool {
-		if items[i].Priority != items[j].Priority {
-			return items[i].Priority > items[j].Priority
-		}
-		return items[i].When.After(items[j].When)
-	})
-
-	// Separate into buckets
-	var high, med, low []DigestItem
-	for _, item := range items {
-		switch {
-		case item.Priority >= 4:
-			high = append(high, item)
-		case item.Priority >= 2:
-			med = append(med, item)
-		default:
-			low = append(low, item)
-		}
-	}
-
-	sb.WriteString(fmt.Sprintf("**🔥 High:** %d | **📋 Review:** %d | **📁 Low:** %d\n\n",
-		len(high), len(med), len(low)))
-
-	// High priority
-	if len(high) > 0 {
-		sb.WriteString("## 🔥 Action Required\n\n")
-		for _, item := range high {
-			sb.WriteString(formatFull(item))
-		}
-		sb.WriteString("\n")
-	}
-
-	// Medium priority grouped by repo
-	if len(med) > 0 {
-		sb.WriteString("## 📋 Worth Reviewing\n\n")
-		sb.WriteString(groupByRepo(med, true))
-	}
-
-	// Low priority collapsed
-	if len(low) > 0 {
-		sb.WriteString("## 📁 Low Priority\n\n")
-		sb.WriteString("<details>\n<summary>")
-		sb.WriteString(fmt.Sprintf("%d items", len(low)))
-		sb.WriteString("</summary>\n\n")
-		sb.WriteString(groupByRepo(low, false))
-		sb.WriteString("</details>\n")
-	}
-
-	return sb.String()
-}
-
-func generateRepoMode(items []DigestItem) string {
-	var sb strings.Builder
-
-	// Group by repo, then by section
 	type repoData struct {
-		sections map[string][]DigestItem
-		order    []string
+		topics     map[string]*topicData
+		topicOrder []string
+		other      []DigestItem // items without topics (from watches)
 	}
 	repos := make(map[string]*repoData)
 	repoOrder := []string{}
@@ -122,39 +48,64 @@ func generateRepoMode(items []DigestItem) string {
 	for _, item := range items {
 		if repos[item.RepoName] == nil {
 			repos[item.RepoName] = &repoData{
-				sections: make(map[string][]DigestItem),
+				topics: make(map[string]*topicData),
 			}
 			repoOrder = append(repoOrder, item.RepoName)
 		}
 		rd := repos[item.RepoName]
-		if _, exists := rd.sections[item.Section]; !exists {
-			rd.order = append(rd.order, item.Section)
+
+		if item.Topic != "" {
+			if rd.topics[item.Topic] == nil {
+				rd.topics[item.Topic] = &topicData{}
+				rd.topicOrder = append(rd.topicOrder, item.Topic)
+			}
+			td := rd.topics[item.Topic]
+			if item.ItemType == "issue" {
+				td.issues = append(td.issues, item)
+			} else {
+				td.prs = append(td.prs, item)
+			}
+		} else {
+			rd.other = append(rd.other, item)
 		}
-		rd.sections[item.Section] = append(rd.sections[item.Section], item)
 	}
 
+	// Render each repo
 	for _, repoName := range repoOrder {
 		rd := repos[repoName]
 		sb.WriteString(fmt.Sprintf("## %s\n\n", repoName))
 
-		for _, secName := range rd.order {
-			secItems := rd.sections[secName]
+		// Render topics
+		for _, topic := range rd.topicOrder {
+			td := rd.topics[topic]
+			sb.WriteString(fmt.Sprintf("### %s\n\n", topic))
 
-			// Extract section suffix
-			displaySec := secName
-			if idx := strings.Index(secName, " · "); idx != -1 {
-				displaySec = secName[idx+len(" · "):]
+			// Issues
+			if len(td.issues) > 0 {
+				sb.WriteString("**Issues**\n\n")
+				sortByMention(td.issues)
+				for _, item := range td.issues {
+					sb.WriteString(formatTopicItem(item))
+				}
+				sb.WriteString("\n")
 			}
 
-			sb.WriteString(fmt.Sprintf("### %s\n\n", displaySec))
+			// PRs
+			if len(td.prs) > 0 {
+				sb.WriteString("**PRs**\n\n")
+				sortByMention(td.prs)
+				for _, item := range td.prs {
+					sb.WriteString(formatTopicItem(item))
+				}
+				sb.WriteString("\n")
+			}
+		}
 
-			// Sort by time
-			sort.Slice(secItems, func(i, j int) bool {
-				return secItems[i].When.After(secItems[j].When)
-			})
-
-			for _, item := range secItems {
-				sb.WriteString(formatCompact(item))
+		// Other items (from watches like labeled)
+		if len(rd.other) > 0 {
+			sb.WriteString("### Other\n\n")
+			for _, item := range rd.other {
+				sb.WriteString(formatSimple(item))
 			}
 			sb.WriteString("\n")
 		}
@@ -163,59 +114,61 @@ func generateRepoMode(items []DigestItem) string {
 	return sb.String()
 }
 
-func groupByRepo(items []DigestItem, showPriority bool) string {
-	var sb strings.Builder
-
-	byRepo := make(map[string][]DigestItem)
-	repoOrder := []string{}
-	for _, item := range items {
-		if _, exists := byRepo[item.RepoName]; !exists {
-			repoOrder = append(repoOrder, item.RepoName)
+func sortByMention(items []DigestItem) {
+	sort.Slice(items, func(i, j int) bool {
+		// Mentioned items first
+		if items[i].UserMention != items[j].UserMention {
+			return items[i].UserMention
 		}
-		byRepo[item.RepoName] = append(byRepo[item.RepoName], item)
-	}
-
-	for _, repoName := range repoOrder {
-		repoItems := byRepo[repoName]
-		sb.WriteString(fmt.Sprintf("### %s\n\n", repoName))
-		for _, item := range repoItems {
-			if showPriority {
-				sb.WriteString(formatCompact(item))
-			} else {
-				sb.WriteString(formatMinimal(item))
-			}
+		// Then by priority
+		if items[i].Priority != items[j].Priority {
+			return items[i].Priority > items[j].Priority
 		}
-		sb.WriteString("\n")
-	}
-
-	return sb.String()
+		// Then by time
+		return items[i].When.After(items[j].When)
+	})
 }
 
-func formatFull(item DigestItem) string {
+func formatTopicItem(item DigestItem) string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("- **[P%d]** [%s](%s) _%s_\n", item.Priority, item.Title, item.URL, item.RepoName))
-	if item.Summary != "" {
-		sb.WriteString(fmt.Sprintf("  > %s\n", item.Summary))
-	}
-	sb.WriteString(fmt.Sprintf("  %s\n", item.Sub))
-	return sb.String()
-}
 
-func formatCompact(item DigestItem) string {
-	var sb strings.Builder
-	if item.Priority > 0 {
-		sb.WriteString(fmt.Sprintf("- **[P%d]** ", item.Priority))
+	// Mention indicator
+	if item.UserMention {
+		sb.WriteString("- 🔔 ")
 	} else {
 		sb.WriteString("- ")
 	}
+
+	// Priority if set
+	if item.Priority > 0 {
+		sb.WriteString(fmt.Sprintf("**[P%d]** ", item.Priority))
+	}
+
+	// Title with link
 	sb.WriteString(fmt.Sprintf("[%s](%s)", item.Title, item.URL))
+
+	// Summary or sub
 	if item.Summary != "" {
 		sb.WriteString(fmt.Sprintf(" - _%s_", item.Summary))
 	}
-	sb.WriteString(fmt.Sprintf(" · %s\n", item.Sub))
+	sb.WriteString(fmt.Sprintf(" · %s", item.Sub))
+
+	// Mention badge
+	if item.UserMention {
+		sb.WriteString(" **← you're involved!**")
+	}
+
+	sb.WriteString("\n")
 	return sb.String()
 }
 
-func formatMinimal(item DigestItem) string {
-	return fmt.Sprintf("- [%s](%s)\n", item.Title, item.URL)
+func formatSimple(item DigestItem) string {
+	var sb strings.Builder
+	if item.UserMention {
+		sb.WriteString("- 🔔 ")
+	} else {
+		sb.WriteString("- ")
+	}
+	sb.WriteString(fmt.Sprintf("[%s](%s) · %s\n", item.Title, item.URL, item.Sub))
+	return sb.String()
 }
