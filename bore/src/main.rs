@@ -4,7 +4,7 @@ mod ui;
 
 use app::App;
 use clap::Parser;
-use config::Config;
+use config::{Config, PortMapping, TunnelType};
 use crossterm::{
     event::{self, Event, KeyCode},
     execute,
@@ -15,7 +15,7 @@ use std::io::{self, Write};
 
 #[derive(Parser)]
 #[command(name = "bore")]
-#[command(about = "SSH Port Forward TUI", long_about = None)]
+#[command(about = "SSH & Kubernetes Port Forward TUI", long_about = None)]
 struct Cli {
     /// Use a preset configuration
     #[arg(short, long)]
@@ -45,7 +45,10 @@ fn main() -> Result<(), io::Error> {
     if cli.init_config {
         match Config::create_example_config() {
             Ok(_) => {
-                println!("✓ Created example config at: {}", config::get_config_path_display());
+                println!(
+                    "✓ Created example config at: {}",
+                    config::get_config_path_display()
+                );
                 println!("\nEdit this file to add your presets, then run:");
                 println!("  bore --preset <name>");
                 return Ok(());
@@ -63,7 +66,9 @@ fn main() -> Result<(), io::Error> {
         Err(e) => {
             eprintln!("Warning: Failed to load config: {}", e);
             eprintln!("Run 'bore --init-config' to create a config file\n");
-            Config { presets: std::collections::HashMap::new() }
+            Config {
+                presets: std::collections::HashMap::new(),
+            }
         }
     };
 
@@ -74,33 +79,56 @@ fn main() -> Result<(), io::Error> {
         } else {
             println!("Available presets:\n");
             for (name, preset) in &config.presets {
-                println!("  {} → {} [{}]",
-                    name,
-                    preset.host,
-                    preset.ports.iter()
-                        .map(|p| p.to_string())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                );
+                let type_label = preset.tunnel_type.type_label();
+                let target = preset.tunnel_type.display_name();
+                let ports_str = preset
+                    .ports
+                    .iter()
+                    .map(|p| {
+                        let local = p.local_port();
+                        let remote = p.remote_port();
+                        if local == remote {
+                            local.to_string()
+                        } else {
+                            format!("{}:{}", local, remote)
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                println!("  {} ({}) → {} [{}]", name, type_label, target, ports_str);
             }
             println!("\nUsage: bore --preset <name>");
         }
         return Ok(());
     }
 
-    // Get host and ports (from preset or interactive)
-    let (host, ports) = if let Some(preset_name) = cli.preset {
+    // Get tunnel config (from preset or interactive)
+    let (tunnel_type, ports) = if let Some(preset_name) = cli.preset {
         match config.get_preset(&preset_name) {
             Some(preset) => {
-                println!("Using preset '{}': {} [{}]",
-                    preset_name,
-                    preset.host,
-                    preset.ports.iter()
-                        .map(|p| p.to_string())
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                let type_label = preset.tunnel_type.type_label();
+                let target = preset.tunnel_type.display_name();
+                let ports_str = preset
+                    .ports
+                    .iter()
+                    .map(|p| {
+                        let local = p.local_port();
+                        let remote = p.remote_port();
+                        if local == remote {
+                            local.to_string()
+                        } else {
+                            format!("{}:{}", local, remote)
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                println!(
+                    "Using preset '{}' ({}): {} [{}]",
+                    preset_name, type_label, target, ports_str
                 );
-                (preset.host.clone(), preset.ports.clone())
+                (preset.tunnel_type.clone(), preset.ports.clone())
             }
             None => {
                 eprintln!("✗ Preset '{}' not found", preset_name);
@@ -110,16 +138,56 @@ fn main() -> Result<(), io::Error> {
         }
     } else {
         // Interactive mode
-        let host = get_input("SSH host (e.g., 'dev' or 'user@dev'): ")?;
-        if host.is_empty() {
-            eprintln!("Error: Host cannot be empty");
-            std::process::exit(1);
-        }
+        println!("Select tunnel type:");
+        println!("  1. SSH");
+        println!("  2. Kubernetes");
+        let type_choice = get_input("Choice [1/2]: ")?;
 
-        let ports_input = get_input("Ports to forward (comma-separated, e.g., '3001,8080,4002'): ")?;
-        let ports: Vec<u16> = ports_input
+        let tunnel_type = match type_choice.as_str() {
+            "2" | "k8s" | "kubernetes" => {
+                let resource =
+                    get_input("Resource (e.g., 'svc/redis', 'pod/my-pod', 'deploy/api'): ")?;
+                if resource.is_empty() {
+                    eprintln!("Error: Resource cannot be empty");
+                    std::process::exit(1);
+                }
+
+                let namespace = get_input("Namespace (leave empty for default): ")?;
+                let namespace = if namespace.is_empty() {
+                    None
+                } else {
+                    Some(namespace)
+                };
+
+                let context = get_input("Context (leave empty for current): ")?;
+                let context = if context.is_empty() {
+                    None
+                } else {
+                    Some(context)
+                };
+
+                TunnelType::Kubernetes {
+                    resource,
+                    namespace,
+                    context,
+                }
+            }
+            _ => {
+                let host = get_input("SSH host (e.g., 'dev' or 'user@dev'): ")?;
+                if host.is_empty() {
+                    eprintln!("Error: Host cannot be empty");
+                    std::process::exit(1);
+                }
+                TunnelType::Ssh { host }
+            }
+        };
+
+        let ports_input =
+            get_input("Ports to forward (comma-separated, e.g., '3001,8080,4002'): ")?;
+        let ports: Vec<PortMapping> = ports_input
             .split(',')
-            .filter_map(|s| s.trim().parse().ok())
+            .filter_map(|s| s.trim().parse::<u16>().ok())
+            .map(PortMapping::Single)
             .collect();
 
         if ports.is_empty() {
@@ -127,7 +195,7 @@ fn main() -> Result<(), io::Error> {
             std::process::exit(1);
         }
 
-        (host, ports)
+        (tunnel_type, ports)
     };
 
     enable_raw_mode()?;
@@ -136,7 +204,7 @@ fn main() -> Result<(), io::Error> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut app = App::new(host, ports);
+    let mut app = App::new(tunnel_type, ports);
     let res = run_app(&mut terminal, &mut app);
 
     disable_raw_mode()?;
